@@ -411,7 +411,7 @@ esac
         )
         self.assertTrue(
             any(
-                "@codexfarm-deep-history-integration 3:on" in " ".join(command)
+                "@codexfarm-deep-history-integration 4:on" in " ".join(command)
                 for command in tmux_commands
             )
         )

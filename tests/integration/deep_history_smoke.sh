@@ -99,11 +99,11 @@ done
 
 [[ "$(tmux show-options -gqv '@deep-history-auto-start')" == "on" ]]
 [[ "$(tmux show-options -gqv '@deep-history-seamless-pageup')" == "on" ]]
-[[ "$(tmux show-options -gqv '@codexfarm-deep-history-integration')" == "3:on" ]]
+[[ "$(tmux show-options -gqv '@codexfarm-deep-history-integration')" == "4:on" ]]
 [[ "$(tmux show-options -gqv history-limit)" == "50000" ]]
 for table in copy-mode copy-mode-vi; do
     PAGEUP_BINDING="$(tmux list-keys -T "$table" | grep 'PPage.*tmux-deep-history.*view.*--older')"
-    grep -Fq '#{>=:#{scroll_position},#{history_size}}' <<< "$PAGEUP_BINDING"
+    grep -Fq '#{e|>=:#{scroll_position},#{history_size}}' <<< "$PAGEUP_BINDING"
     if grep -Fq '#{pane_id}' <<< "$PAGEUP_BINDING"; then
         printf 'Page Up binding still contains an unexpanded pane target: %s\n' \
             "$PAGEUP_BINDING" >&2

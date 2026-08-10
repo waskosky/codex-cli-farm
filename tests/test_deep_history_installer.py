@@ -35,7 +35,7 @@ def build_archive(path: Path, *, unsafe_name: str | None = None) -> str:
             b"    def start_pipe(self, target, command, *, only_if_none=True):\n"
             b"        pass\n"
             b"    def bind(self, *arguments):\n"
-            b"        pass\n",
+            b"        print('binding=' + ' '.join(arguments))\n",
             0o644,
         ),
         "tmux-deep-history/src/tmux_deep_history/cli.py": (
@@ -50,6 +50,14 @@ def build_archive(path: Path, *, unsafe_name: str | None = None) -> str:
             b"if os.environ.get('FAKE_DEEP_HISTORY_PAGER_FILE'):\n"
             b"    from tmux_deep_history.service import run_pager\n"
             b"    raise SystemExit(run_pager(os.environ['FAKE_DEEP_HISTORY_PAGER_FILE']))\n"
+            b"if os.environ.get('FAKE_DEEP_HISTORY_BIND'):\n"
+            b"    from tmux_deep_history.tmux import Tmux\n"
+            b"    Tmux().bind(\n"
+            b"        'if-shell',\n"
+            b"        '-F',\n"
+            b"        '#{==:#{scroll_position},#{history_size}}',\n"
+            b"    )\n"
+            b"    raise SystemExit(0)\n"
             b"print('arguments=' + ' '.join(sys.argv[1:]))\n",
             0o644,
         ),
@@ -175,6 +183,33 @@ class DeepHistoryInstallerTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertFalse((destination / "obsolete.txt").exists())
             self.assertEqual((destination / "VERSION").read_text(encoding="utf-8"), "0.1.0\n")
+
+    def test_launcher_rewrites_live_history_boundary_as_numeric_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "release.zip"
+            lock = root / "release.lock"
+            destination = root / "data" / "tmux-deep-history"
+            write_lock(lock, build_archive(archive))
+
+            installed = self.run_installer(archive=archive, lock=lock, destination=destination)
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+
+            env = os.environ.copy()
+            env["FAKE_DEEP_HISTORY_BIND"] = "1"
+            bound = subprocess.run(
+                [destination / "bin" / "tmux-deep-history", "status"],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(bound.returncode, 0, bound.stderr)
+            self.assertIn(
+                "binding=if-shell -F #{e|>=:#{scroll_position},#{history_size}}",
+                bound.stdout,
+            )
 
     def test_launcher_falls_back_to_supported_versioned_python(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
