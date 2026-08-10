@@ -249,9 +249,10 @@ def _bind_with_live_history_boundary(self, *arguments):
     # While a pane keeps producing output, tmux can report a copy-mode
     # scroll_position greater than the current history_size at the absolute
     # top. Equality then makes Page Up miss the disk-history handoff until the
-    # user exits and re-enters copy mode.
+    # user exits and re-enters copy mode. Plain tmux comparisons are lexical,
+    # so greater-than-or-equal must use the numeric expression modifier.
     boundary = "#{==:#{scroll_position},#{history_size}}"
-    live_boundary = "#{>=:#{scroll_position},#{history_size}}"
+    live_boundary = "#{e|>=:#{scroll_position},#{history_size}}"
     normalized = tuple(live_boundary if argument == boundary else argument for argument in arguments)
     _bind(self, *normalized)
 
