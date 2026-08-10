@@ -4,7 +4,7 @@
 
 **Goal:** Prevent the disk-history popup from opening until copy mode has numerically reached the top of tmux's retained history.
 
-**Architecture:** Keep the compatibility launcher's interception of the pinned plugin's Page Up binding, but replace the plugin's equality predicate with tmux's integer greater-than-or-equal expression. Advance the farm integration marker so existing tmux servers reinstall the corrected binding.
+**Architecture:** Keep the compatibility launcher's interception of the pinned plugin's Page Up binding, but replace the plugin's equality predicate with tmux's integer greater-than-or-equal expression. Advance the farm integration marker so existing tmux servers reinstall the corrected binding, and require a launcher-version handshake so stale installed launchers cannot falsely claim the new marker.
 
 **Tech Stack:** Bash 3.2-compatible launcher and farm scripts, embedded Python 3.10+, tmux 3.2+ formats, Python `unittest`, shell integration tests.
 
@@ -25,6 +25,8 @@ fake CLI can ask the launcher to bind the upstream predicate:
 Tmux().bind("if-shell", "-F", "#{==:#{scroll_position},#{history_size}}")
 ```
 
+Add a stale-launcher setup fixture whose existing tmux marker is `3:on`.
+
 **Step 2: Assert the desired numeric rewrite**
 
 Add a focused installer test expecting:
@@ -34,7 +36,8 @@ Add a focused installer test expecting:
 ```
 
 Update setup and smoke assertions to expect integration marker `4` and the same
-numeric predicate in both copy-mode tables.
+numeric predicate in both copy-mode tables. Require the launcher to report farm
+integration version 4, and verify a stale launcher cannot advance the marker.
 
 **Step 3: Run tests to verify RED**
 
@@ -62,6 +65,7 @@ git commit -m "test: cover numeric deep-history boundary"
 
 - Modify: `integrations/tmux_deep_history_launcher.sh`
 - Modify: `bin/codex-add`
+- Modify: `README.md`
 
 **Step 1: Implement the minimal predicate fix**
 
@@ -85,16 +89,29 @@ desired_integration="4:$DEEP_HISTORY_SEAMLESS_PAGEUP"
 This makes the next `codex-add` pass invoke plugin installation and replace
 bindings previously installed with marker 3.
 
-**Step 3: Run focused tests to verify GREEN**
+**Step 3: Guard the marker with a launcher capability handshake**
+
+Have the compatibility launcher answer `codexfarm-integration-version` with
+`4`. Before enabling seamless Page Up, require that response in `codex-add`.
+When an older launcher is detected, do not write marker 4; disable plugin
+auto-start, restore native Page Up for farm-managed bindings, use legacy logging
+for the new pane, and print the `setup.sh --with-deep-history` recovery command.
+
+**Step 4: Document the update command**
+
+Clarify in the README that deep-history users should include
+`--with-deep-history` when rerunning setup after an update.
+
+**Step 5: Run focused tests to verify GREEN**
 
 Run the Task 1 command again.
 
 Expected: PASS.
 
-**Step 4: Commit the implementation**
+**Step 6: Commit the implementation**
 
 ```bash
-git add integrations/tmux_deep_history_launcher.sh bin/codex-add
+git add integrations/tmux_deep_history_launcher.sh bin/codex-add README.md
 git commit -m "fix: compare deep-history boundary numerically"
 ```
 

@@ -34,13 +34,18 @@ The compatibility launcher will continue to rewrite the pinned plugin's
 equality predicate when the plugin installs its key bindings. The farm-managed
 integration marker will advance from version 3 to version 4 so an existing tmux
 server does not retain the old lexicographic binding after the launcher is
-updated.
+updated. Before enabling seamless Page Up, `codex-add` asks the installed
+launcher for its farm integration version. A stale launcher cannot claim marker
+4: the farm restores native Page Up in its managed copy-mode tables, uses legacy
+logging for the new pane, and tells the user to rerun setup with deep history.
 
 ## Testing
 
 - Exercise the compatibility wrapper against a fake upstream `Tmux.bind()` and
   assert that it emits the numeric predicate.
 - Update farm setup tests to require integration marker 4.
+- Start from a stale marker-3 launcher and verify it cannot claim marker 4 or
+  leave the farm-managed Page Up bindings active.
 - Update the deep-history tmux smoke test to require the numeric predicate in
   both copy-mode key tables.
 - Run the focused installer/setup tests, shell validation, and the complete unit

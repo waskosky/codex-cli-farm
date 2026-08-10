@@ -536,7 +536,7 @@ start_status_annotator() {
 
 configure_history_backend() {
   local resolved_bin resolved_python deep_root installed_root install_error
-  local desired_integration installed_integration table
+  local desired_integration installed_integration launcher_integration required_integration table
   SELECTED_HISTORY_BACKEND="legacy"
   if [ "$HISTORY_BACKEND" = "legacy" ]; then
     # The plugin's hooks are global. Explicit legacy mode must disable them
@@ -561,6 +561,25 @@ configure_history_backend() {
     return 0
   fi
   DEEP_HISTORY_PYTHON_BIN="$resolved_python"
+  required_integration=4
+  installed_integration="$(tmux show-options -gqv '@codexfarm-deep-history-integration' 2>/dev/null || true)"
+  if [ "$DEEP_HISTORY_SEAMLESS_PAGEUP" = "on" ]; then
+    launcher_integration="$(TMUX_DEEP_HISTORY_PYTHON="$DEEP_HISTORY_PYTHON_BIN" \
+      "$DEEP_HISTORY_BIN" codexfarm-integration-version 2>/dev/null || true)"
+    if [ "$launcher_integration" != "$required_integration" ]; then
+      tmux set-option -gq '@deep-history-auto-start' off >/dev/null 2>&1 || true
+      case "$installed_integration" in
+        *:on)
+          for table in copy-mode copy-mode-vi; do
+            tmux bind-key -T "$table" PPage send-keys -X page-up >/dev/null 2>&1 || true
+          done
+          ;;
+      esac
+      echo "warning: installed deep-history integration is out of date; using legacy pane logging" >&2
+      echo "warning: rerun setup.sh --with-deep-history to update it" >&2
+      return 0
+    fi
+  fi
   if ! tmux set-option -gq '@deep-history-auto-start' off \
     || ! tmux set-option -gq '@deep-history-seamless-pageup' "$DEEP_HISTORY_SEAMLESS_PAGEUP" \
     || ! tmux set-environment -g TMUX_DEEP_HISTORY_PYTHON "$DEEP_HISTORY_PYTHON_BIN" \
@@ -571,8 +590,7 @@ configure_history_backend() {
   deep_root="$(cd "$(dirname "$DEEP_HISTORY_BIN")/.." && pwd)"
   installed_root="$(tmux show-options -gqv '@deep-history-root' 2>/dev/null || true)"
   # Bump this marker whenever farm-managed plugin bindings/options change.
-  desired_integration="4:$DEEP_HISTORY_SEAMLESS_PAGEUP"
-  installed_integration="$(tmux show-options -gqv '@codexfarm-deep-history-integration' 2>/dev/null || true)"
+  desired_integration="$required_integration:$DEEP_HISTORY_SEAMLESS_PAGEUP"
   if [ "$installed_root" != "$deep_root" ] || [ "$installed_integration" != "$desired_integration" ]; then
     if ! install_error=$(TMUX_DEEP_HISTORY_PYTHON="$DEEP_HISTORY_PYTHON_BIN" \
       "$DEEP_HISTORY_BIN" install 2>&1); then

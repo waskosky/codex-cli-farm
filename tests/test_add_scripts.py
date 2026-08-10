@@ -41,6 +41,17 @@ case "$1" in
     fi
     exit 0
     ;;
+  show-options)
+    case "$*" in
+      *"@deep-history-root"*)
+        printf '%s\n' "${TMUX_DEEP_HISTORY_ROOT_OUTPUT:-}"
+        ;;
+      *"@codexfarm-deep-history-integration"*)
+        printf '%s\n' "${TMUX_DEEP_HISTORY_INTEGRATION_OUTPUT:-}"
+        ;;
+    esac
+    exit 0
+    ;;
   *)
     exit 0
     ;;
@@ -381,6 +392,10 @@ esac
         make_executable(
             deep_history,
             "#!/usr/bin/env bash\n"
+            'if [ "${1:-}" = codexfarm-integration-version ]; then\n'
+            "  printf '%s\\n' 4\n"
+            "  exit 0\n"
+            "fi\n"
             f'printf \'python=%s command=%s\\n\' "${{TMUX_DEEP_HISTORY_PYTHON:-}}" "$*" >> {deep_history_log}\n'
             "exit 0\n",
         )
@@ -457,6 +472,51 @@ esac
         self.assertEqual(len(log_files), 1)
         self.assertEqual(log_files[0].stat().st_mode & 0o777, 0o600)
 
+    def test_codex_add_does_not_upgrade_marker_with_stale_deep_history_launcher(self):
+        target_dir = self.tmpdir / "proj-stale-deep-history"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        plugin_root = self.tmpdir / "stale-plugin"
+        deep_history = plugin_root / "bin" / "tmux-deep-history"
+        deep_history_log = self.tmpdir / "stale-deep-history.log"
+        deep_history.parent.mkdir(parents=True)
+        make_executable(
+            deep_history,
+            f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {deep_history_log}\nexit 0\n",
+        )
+        env = self.env.copy()
+        env["CODEXFARM_DEEP_HISTORY_BIN"] = str(deep_history)
+        env["CODEXFARM_DEEP_HISTORY_PYTHON_BIN"] = sys.executable
+        env["TMUX_DEEP_HISTORY_ROOT_OUTPUT"] = str(plugin_root)
+        env["TMUX_DEEP_HISTORY_INTEGRATION_OUTPUT"] = "3:on"
+
+        result = subprocess.run(
+            [REPO_ROOT / "bin" / "codex-add", "-d", str(target_dir)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deep-history integration is out of date", result.stderr)
+        self.assertIn("setup.sh --with-deep-history", result.stderr)
+        self.assertIn("History backend: legacy", result.stdout)
+        self.assertEqual(
+            deep_history_log.read_text(encoding="utf-8").splitlines(),
+            ["codexfarm-integration-version"],
+        )
+        self.assertFalse(
+            any(
+                "@codexfarm-deep-history-integration 4:on" in " ".join(command)
+                for command in self.read_tmux_commands()
+            )
+        )
+        for table in ("copy-mode", "copy-mode-vi"):
+            self.assertIn(
+                ["bind-key", "-T", table, "PPage", "send-keys", "-X", "page-up"],
+                self.read_tmux_commands(),
+            )
+
     def test_codex_add_falls_back_when_deep_history_start_fails(self):
         target_dir = self.tmpdir / "proj-deep-history-fallback"
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -464,6 +524,10 @@ esac
         make_executable(
             deep_history,
             "#!/usr/bin/env bash\n"
+            'if [ "${1:-}" = codexfarm-integration-version ]; then\n'
+            "  printf '%s\\n' 4\n"
+            "  exit 0\n"
+            "fi\n"
             "if [ \"${1:-}\" = start ]; then echo 'simulated start failure' >&2; exit 1; fi\n"
             "exit 0\n",
         )

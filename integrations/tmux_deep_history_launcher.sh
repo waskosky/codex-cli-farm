@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "codexfarm-integration-version" ]]; then
+    printf '%s\n' '4'
+    exit 0
+fi
+
 launcher_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 plugin_root="$(cd -- "$launcher_dir/.." && pwd)"
 viewer_tty_state=""

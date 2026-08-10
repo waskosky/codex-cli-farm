@@ -184,6 +184,27 @@ class DeepHistoryInstallerTests(unittest.TestCase):
             self.assertFalse((destination / "obsolete.txt").exists())
             self.assertEqual((destination / "VERSION").read_text(encoding="utf-8"), "0.1.0\n")
 
+    def test_launcher_reports_farm_integration_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "release.zip"
+            lock = root / "release.lock"
+            destination = root / "data" / "tmux-deep-history"
+            write_lock(lock, build_archive(archive))
+
+            installed = self.run_installer(archive=archive, lock=lock, destination=destination)
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+
+            version = subprocess.run(
+                [destination / "bin" / "tmux-deep-history", "codexfarm-integration-version"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(version.returncode, 0, version.stderr)
+            self.assertEqual(version.stdout.strip(), "4")
+
     def test_launcher_rewrites_live_history_boundary_as_numeric_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -57,6 +57,8 @@ This will:
 If `tmux` is unavailable, core tmux commands will not work until you install it. If `multitail` is unavailable, `codex-watch` falls back to a simpler `tail` view.
 Omit `--with-deep-history` when you want the legacy flat-log backend only. Re-running the setup
 command is safe; the installed version can change only when this repository's reviewed lock changes.
+After updating an existing checkout, include `--with-deep-history` again if you use that backend so
+its compatibility launcher stays in sync with the copied farm commands.
 
 Codex requires review for non-managed command hooks. Open `/hooks` in Codex CLI
 after setup and trust the Agent CLI Farm hook. It receives the active Codex
