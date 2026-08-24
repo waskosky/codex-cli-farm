@@ -568,6 +568,7 @@ configure_history_backend() {
       "$DEEP_HISTORY_BIN" codexfarm-integration-version 2>/dev/null || true)"
     if [ "$launcher_integration" != "$required_integration" ]; then
       tmux set-option -gq '@deep-history-auto-start' off >/dev/null 2>&1 || true
+      tmux set-option -gu '@codexfarm-deep-history-integration' >/dev/null 2>&1 || true
       case "$installed_integration" in
         *:on)
           for table in copy-mode copy-mode-vi; do

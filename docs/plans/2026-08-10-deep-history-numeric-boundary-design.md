@@ -37,7 +37,8 @@ server does not retain the old lexicographic binding after the launcher is
 updated. Before enabling seamless Page Up, `codex-add` asks the installed
 launcher for its farm integration version. A stale launcher cannot claim marker
 4: the farm restores native Page Up in its managed copy-mode tables, uses legacy
-logging for the new pane, and tells the user to rerun setup with deep history.
+logging for the new pane, invalidates the marker so a repaired launcher must
+reinstall its bindings, and tells the user to rerun setup with deep history.
 
 ## Testing
 

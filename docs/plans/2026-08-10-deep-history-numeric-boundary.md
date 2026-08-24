@@ -95,7 +95,9 @@ Have the compatibility launcher answer `codexfarm-integration-version` with
 `4`. Before enabling seamless Page Up, require that response in `codex-add`.
 When an older launcher is detected, do not write marker 4; disable plugin
 auto-start, restore native Page Up for farm-managed bindings, use legacy logging
-for the new pane, and print the `setup.sh --with-deep-history` recovery command.
+for the new pane, invalidate the existing marker so a repaired launcher
+reinstalls its bindings, and print the `setup.sh --with-deep-history` recovery
+command.
 
 **Step 4: Document the update command**
 
