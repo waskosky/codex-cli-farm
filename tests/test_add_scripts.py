@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import socket
@@ -5,9 +6,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - the farm currently targets tmux hosts
+    fcntl = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1235,6 +1242,78 @@ esac
             rows,
         )
 
+    def test_codex_save_repairs_child_thread_id_from_hook_metadata(self):
+        root_id = "019e1659-3a2f-7a40-95cf-5ac9dd7fe5d4"
+        session_dir = self.tmpdir / ".codex" / "sessions" / "2026" / "09" / "01"
+        session_dir.mkdir(parents=True)
+        child_path = session_dir / f"rollout-child-{self.hook_session_id}.jsonl"
+        child_path.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": self.hook_session_id,
+                        "session_id": root_id,
+                        "parent_thread_id": root_id,
+                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": root_id}}},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        env = self.env.copy()
+        env["HOOK_SESSION_ID"] = self.hook_session_id
+        env["HOOK_SESSION_PID"] = "101"
+
+        subprocess.run(
+            [REPO_ROOT / "bin" / "codex-save", str(self.manifest)],
+            check=True,
+            env=env,
+        )
+
+        rows = self.manifest.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"proj\t/tmp/project\tcodex\tresume {root_id}", rows)
+        self.assertNotIn(self.hook_session_id, "\n".join(rows))
+
+    def test_codex_save_maps_first_procfs_child_rollout_to_root(self):
+        root_id = "019e1659-3a2f-7a40-95cf-5ac9dd7fe5d4"
+        child_id = "123e4567-e89b-42d3-a456-426614174099"
+        session_dir = self.tmpdir / ".codex" / "sessions" / "2026" / "09" / "01"
+        session_dir.mkdir(parents=True)
+        child_path = session_dir / f"rollout-child-{child_id}.jsonl"
+        child_path.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": child_id,
+                        "session_id": root_id,
+                        "parent_thread_id": root_id,
+                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": root_id}}},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        proc_fd_dir = self.tmpdir / "proc" / "101" / "fd"
+        proc_fd_dir.mkdir(parents=True)
+        (proc_fd_dir / "7").symlink_to(child_path)
+        env = self.env.copy()
+        env["NO_CODEX_SESSION"] = "1"
+        env["CODEX_PROC_ROOT"] = str(self.tmpdir / "proc")
+
+        subprocess.run(
+            [REPO_ROOT / "bin" / "codex-save", str(self.manifest)],
+            check=True,
+            env=env,
+        )
+
+        rows = self.manifest.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"proj\t/tmp/project\tcodex\tresume {root_id}", rows)
+        self.assertNotIn(child_id, "\n".join(rows))
+
     def test_codex_save_ignores_hook_metadata_owned_by_a_stale_pid(self):
         env = self.env.copy()
         env["HOOK_SESSION_ID"] = self.hook_session_id
@@ -1549,6 +1628,101 @@ exit 0
             any(cmd and cmd[0] == "send-keys" for cmd in self.read_tmux_commands()),
             "restore should launch the resume command instead of typing it into a running CLI",
         )
+
+    def test_codex_restore_repairs_existing_child_thread_manifest(self):
+        root_id = "019e1659-3a2f-7a40-95cf-5ac9dd7fe5d4"
+        child_id = "123e4567-e89b-42d3-a456-426614174099"
+        session_dir = self.tmpdir / ".codex" / "sessions" / "2026" / "09" / "01"
+        session_dir.mkdir(parents=True)
+        child_path = session_dir / f"rollout-child-{child_id}.jsonl"
+        child_path.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": child_id,
+                        "session_id": root_id,
+                        "parent_thread_id": root_id,
+                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": root_id}}},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.manifest.write_text(
+            f"name\tdir\tcmd\targs\nproj\t{self.project_dir}\tcodex\tresume {child_id}\n",
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [REPO_ROOT / "bin" / "codex-restore", str(self.manifest)],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        add_calls = self.codex_add_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(add_calls, [f"proj|codex|resume {root_id}|-d {self.project_dir}"])
+        self.assertNotIn(child_id, result.stdout + result.stderr)
+
+    @unittest.skipIf(fcntl is None, "advisory file locks are unavailable")
+    def test_codex_restore_refuses_thread_with_persistent_active_writer(self):
+        session_id = "019e1659-3a2f-7a40-95cf-5ac9dd7fe5d4"
+        lock_dir = self.tmpdir / ".codex" / "thread-writer-locks"
+        lock_dir.mkdir(parents=True)
+        lock_path = lock_dir / f"{session_id}.lock"
+        env = self.env.copy()
+        env["CODEXFARM_RESTORE_WRITER_WAIT_SECONDS"] = "0"
+
+        with lock_path.open("a+b") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = subprocess.run(
+                [REPO_ROOT / "bin" / "codex-restore", str(self.manifest)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.codex_add_log.exists())
+        self.assertIn("active in another Codex process", result.stderr)
+        self.assertIn("proj", result.stderr)
+        self.assertNotIn(session_id, result.stderr)
+
+    @unittest.skipIf(fcntl is None, "advisory file locks are unavailable")
+    def test_codex_restore_waits_for_writer_released_during_shutdown(self):
+        session_id = "019e1659-3a2f-7a40-95cf-5ac9dd7fe5d4"
+        lock_dir = self.tmpdir / ".codex" / "thread-writer-locks"
+        lock_dir.mkdir(parents=True)
+        lock_path = lock_dir / f"{session_id}.lock"
+        env = self.env.copy()
+        env["CODEXFARM_RESTORE_WRITER_WAIT_SECONDS"] = "2"
+
+        with lock_path.open("a+b") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            release = threading.Timer(
+                0.2,
+                lambda: fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN),
+            )
+            release.start()
+            started = time.monotonic()
+            result = subprocess.run(
+                [REPO_ROOT / "bin" / "codex-restore", str(self.manifest)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            elapsed = time.monotonic() - started
+            release.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreaterEqual(elapsed, 0.15)
+        self.assertTrue(self.codex_add_log.exists())
 
     def test_codex_restore_creates_every_fresh_duplicate_name_row(self):
         first_id, second_id = self.write_duplicate_manifest()

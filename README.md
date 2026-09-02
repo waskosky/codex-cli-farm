@@ -258,12 +258,24 @@ recreating every row.
 
 Saved Codex, Claude, and Gemini windows require exact session IDs by default.
 Codex first uses fresh hook metadata owned by the pane's current provider
-process; all providers can fall back to live session-file discovery. If any
-recognized provider ID is unresolved, `codex-save` exits nonzero and leaves the
-previous manifest intact. `--allow-fallback` explicitly permits
+process; all providers can fall back to live session-file discovery. Codex
+rollout metadata is checked before an ID is saved: multi-agent child threads are
+mapped to their resumable root session, while ordinary forks retain their own
+independent thread IDs. Restore applies the same check, so manifests saved with
+an older farm version are repaired as they are launched. If any recognized
+provider ID is unresolved, `codex-save` exits nonzero and leaves the previous
+manifest intact. `--allow-fallback` explicitly permits
 `codex resume --last`, `claude --continue`, or `gemini --resume latest`.
 Only pane 0 is saved. Split layouts and scrollback are not reconstructed. Missing saved directories fall back to `$HOME` with a warning.
 Manifests are written owner-only and via atomic replacement, but they are still trusted executable input because restore launches the recorded commands.
+
+Codex permits only one writer for a conversation. Restore waits up to 10 seconds
+for a writer left behind by tmux shutdown to exit, then leaves that window
+unrestored and returns nonzero rather than starting a TUI that will immediately
+fail. After an in-TUI `/fork`, Codex can keep the original conversation loaded
+in that same process. To return to the original, use
+`/resume` in the owning TUI, or exit that Codex process before resuming the
+original elsewhere. The farm will not terminate another live Codex process.
 
 Check installed-helper freshness and manifest resume coverage without printing session IDs:
 
@@ -383,6 +395,7 @@ Common:
 - **`CODEXFARM_PYTHON_BIN`** - Python 3.10+ interpreter to prefer during `./setup.sh`
 - **`CODEXFARM_WITH_DEEP_HISTORY`** - set to `1` as an alternative to `setup.sh --with-deep-history`
 - **`CODEXFARM_INSTALL_SESSION_HOOK`** - set to `0` to leave the Codex user hook file unchanged during setup
+- **`CODEXFARM_RESTORE_WRITER_WAIT_SECONDS`** - seconds `codex-restore` waits for an exact Codex thread's active writer to exit (default `10`)
 - **`CODEXFARM_HISTORY_BACKEND`** - `auto` (default), `legacy`, or `deep-history`; auto uses the pinned plugin when installed and otherwise preserves legacy logging
 - **`CODEXFARM_DEEP_HISTORY_BIN`** - override the deep-history executable discovered under the XDG data directory
 - **`CODEXFARM_DEEP_HISTORY_PYTHON_BIN`** - override the Python 3.10+ interpreter used by deep-history hooks and loggers (default searches supported `python3` and versioned commands)
@@ -521,6 +534,7 @@ agent-cli-farm/
 │   ├── codex-doctor   # Diagnose installed-helper and manifest drift
 │   ├── codex-save     # Save manifest of windows
 │   ├── codex-restore  # Restore windows from manifest
+│   ├── codex-session-meta.py # Resolve resumable roots and writer ownership
 │   ├── codex-session-hook.py # Record active Codex IDs on managed tmux panes
 │   ├── codex-session-hook-install.py # Safely merge the user hook config
 │   ├── codex-farm-reboot # Save, stop, and restore a farm
@@ -552,6 +566,9 @@ agent-cli-farm/
   process file descriptors: Codex under `~/.codex/sessions`, Claude under
   `~/.claude/projects`, and Gemini under a `.gemini/.../chats` directory.
   Missing provider IDs stop save unless fallback behavior is explicitly enabled.
+- A Codex conversation cannot be resumed by two processes at once. In-TUI
+  `/fork` can retain the original thread's writer ownership until that process
+  unloads it; use the same TUI's `/resume` picker or close the owning process.
 - A single positional argument to `codex-add` is interpreted as a farm name when it does not look like a path. Use `--session NAME` to force farm selection when needed.
 - Gemini looper support is generic command execution, not a verified resumable protocol.
 

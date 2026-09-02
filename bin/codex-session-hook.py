@@ -130,6 +130,11 @@ def record_session() -> None:
     if not isinstance(payload, dict):
         return
 
+    # Thread-spawn subagents share the root pane and environment, but their
+    # concrete thread IDs cannot be resumed independently as top-level TUIs.
+    if provider == "codex" and ("agent_id" in payload or "agent_type" in payload):
+        return
+
     session_id = payload.get("session_id")
     event_name = payload.get("hook_event_name")
     if (

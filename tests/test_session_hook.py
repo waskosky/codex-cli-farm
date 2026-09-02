@@ -163,6 +163,25 @@ class SessionHookRuntimeTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertEqual(self.tmux_commands(), [])
 
+    def test_ignores_codex_subagent_prompt_events(self) -> None:
+        for marker in (
+            {"agent_id": "123e4567-e89b-42d3-a456-426614174099"},
+            {"agent_type": "worker"},
+        ):
+            with self.subTest(marker=marker):
+                payload = {
+                    "hook_event_name": "UserPromptSubmit",
+                    "session_id": "123e4567-e89b-42d3-a456-426614174099",
+                    **marker,
+                }
+                result = self.run_hook(json.dumps(payload))
+
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, "")
+
+        self.assertEqual(self.tmux_commands(), [])
+
 
 class SessionHookInstallerTests(unittest.TestCase):
     def setUp(self) -> None:

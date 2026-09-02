@@ -4,6 +4,9 @@ set -euo pipefail
 # Snapshot the current Codex tmux windows to a manifest file
 # Usage: codex-save [--allow-fallback] [manifest-path]
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SESSION_META_BIN="${CODEX_SESSION_META_BIN:-$SCRIPT_DIR/codex-session-meta.py}"
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--all-registered] [--allow-fallback] [manifest-path]
@@ -76,6 +79,20 @@ valid_session_id() {
   [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
 }
 
+resumable_session_id() {
+  local tool="$1"
+  local session_id="$2"
+  local resolved=""
+  if [ "$tool" = "codex" ] && [ -x "$SESSION_META_BIN" ]; then
+    resolved="$("$SESSION_META_BIN" resolve-id "$session_id" 2>/dev/null || true)"
+    if valid_session_id "$resolved"; then
+      printf '%s' "$resolved"
+      return 0
+    fi
+  fi
+  printf '%s' "$session_id"
+}
+
 pane_option() {
   local pane_target="$1"
   local option="$2"
@@ -116,8 +133,16 @@ session_file_matches_tool() {
 }
 
 session_id_from_path() {
-  local path="$1"
-  local session_id
+  local tool="$1"
+  local path="$2"
+  local session_id=""
+  if [ "$tool" = "codex" ] && [ -x "$SESSION_META_BIN" ]; then
+    session_id="$("$SESSION_META_BIN" resolve-path "$path" 2>/dev/null || true)"
+    if valid_session_id "$session_id"; then
+      printf '%s' "$session_id"
+      return 0
+    fi
+  fi
   session_id="$(extract_uuid_from_session_path "$path")"
   if [ -n "$session_id" ]; then
     printf '%s' "$session_id"
@@ -159,7 +184,7 @@ session_id_from_procfs() {
     path="$(readlink "$descriptor" 2>/dev/null || true)"
     path="${path% (deleted)}"
     if session_file_matches_tool "$tool" "$path"; then
-      session_id="$(session_id_from_path "$path" || true)"
+      session_id="$(session_id_from_path "$tool" "$path" || true)"
       if [ -n "$session_id" ]; then
         printf '%s' "$session_id"
         return 0
@@ -201,7 +226,7 @@ session_id_from_process_files() {
         n*)
           path="${line#n}"
           if session_file_matches_tool "$tool" "$path"; then
-            session_id="$(session_id_from_path "$path" || true)"
+            session_id="$(session_id_from_path "$tool" "$path" || true)"
             if [ -n "$session_id" ]; then
               printf '%s' "$session_id"
               return 0
@@ -318,7 +343,7 @@ session_id_for_pane() {
     && { [ "$pane_dead" = "1" ] \
       || { [ -n "$provider_pid" ] && [ "$metadata_pid" = "$provider_pid" ]; }; }
   then
-    printf '%s' "$session_id"
+    resumable_session_id "$tool" "$session_id"
     return 0
   fi
 

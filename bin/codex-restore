@@ -14,6 +14,8 @@ case "$script_name" in
   gemini-restore) tool_name="${CODEX_TOOL_NAME:-gemini}" ;;
 esac
 ADD_BIN="${CODEX_ADD_BIN:-$SCRIPT_DIR/codex-add}"
+SESSION_META_BIN="${CODEX_SESSION_META_BIN:-$SCRIPT_DIR/codex-session-meta.py}"
+WRITER_WAIT_SECONDS="${CODEXFARM_RESTORE_WRITER_WAIT_SECONDS:-10}"
 
 usage() {
   cat <<EOF
@@ -109,6 +111,25 @@ existing_window_target() {
 
 valid_session_id() {
   [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
+resolve_codex_session_id() {
+  local session_id="$1"
+  local resolved=""
+  if [ -x "$SESSION_META_BIN" ]; then
+    resolved="$("$SESSION_META_BIN" resolve-id "$session_id" 2>/dev/null || true)"
+  fi
+  if valid_session_id "$resolved"; then
+    printf '%s' "$resolved"
+  else
+    printf '%s' "$session_id"
+  fi
+}
+
+codex_session_is_writable() {
+  local session_id="$1"
+  [ -x "$SESSION_META_BIN" ] || return 0
+  "$SESSION_META_BIN" wait-writable "$session_id" "$WRITER_WAIT_SECONDS" >/dev/null 2>&1
 }
 
 tool_from_command() {
@@ -310,6 +331,11 @@ if [ "$all_registered" -eq 1 ] && [ "${#args_pos[@]}" -gt 0 ]; then
   exit 2
 fi
 
+if [[ ! "$WRITER_WAIT_SECONDS" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "Invalid CODEXFARM_RESTORE_WRITER_WAIT_SECONDS: $WRITER_WAIT_SECONDS" >&2
+  exit 2
+fi
+
 SESSION="${CODEX_SESSION:-$DEFAULT_SESSION}"
 MANIFEST_PATH="${args_pos[0]:-$(default_manifest_path_for_session "$SESSION")}"
 
@@ -365,6 +391,7 @@ fi
 # Read manifest; skip header
 seen_names=()
 seen_counts=()
+restore_failures=0
 {
   IFS= read -r _header || true
   while IFS=$'\t' read -r name dir cmd args || [ -n "${name:-}" ]; do
@@ -389,15 +416,31 @@ seen_counts=()
     case "$RESTORE_CMD" in
       codex|claude|gemini) restore_provider="$RESTORE_CMD" ;;
     esac
+
+    exact_session_id="$(
+      exact_session_id_from_restore "$RESTORE_CMD" "$RESTORE_ARGS" || true
+    )"
+    if [ "$RESTORE_CMD" = "codex" ] && [ -n "$exact_session_id" ]; then
+      resolved_session_id="$(resolve_codex_session_id "$exact_session_id")"
+      if [ "$resolved_session_id" != "$exact_session_id" ]; then
+        exact_session_id="$resolved_session_id"
+        RESTORE_ARGS="resume $exact_session_id"
+        echo "Repairing saved child-thread reference for window: $name" >&2
+      fi
+      if ! codex_session_is_writable "$exact_session_id"; then
+        echo "Unable to restore Codex window '$name': its conversation is active in another Codex process." >&2
+        echo "Switch to it with /resume in the owning TUI, or exit that Codex process and rerun codex-restore." >&2
+        restore_failures=$((restore_failures + 1))
+        continue
+      fi
+    fi
+
     CODEX_TOOL_NAME="$restore_provider" \
       CODEX_NAME="$name" \
       CODEX_CMD="$RESTORE_CMD" \
       CODEX_ARGS="$RESTORE_ARGS" \
       "$ADD_BIN" -d "$restore_dir"
 
-    exact_session_id="$(
-      exact_session_id_from_restore "$RESTORE_CMD" "$RESTORE_ARGS" || true
-    )"
     if [ -n "$exact_session_id" ]; then
       created_target="$(
         existing_window_target "$SESSION" "$name" "$window_occurrence" || true
@@ -416,6 +459,11 @@ seen_counts=()
     fi
   done
 } < "$MANIFEST_PATH"
+
+if [ "$restore_failures" -ne 0 ]; then
+  echo "Restore incomplete: $restore_failures Codex window(s) still have an active writer." >&2
+  exit 1
+fi
 
 if [ "$attach" -eq 1 ]; then
   attach_to_session "$SESSION"
